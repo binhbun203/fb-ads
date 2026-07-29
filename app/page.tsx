@@ -34,12 +34,13 @@ const products = [
   { name: "Combo sáng da 30 ngày", sku: "CB-SD30", orders: 76, revenue: 20520000, adCost: 6460000, cogs: 9120000 },
 ];
 
-type Tab = "Tổng quan" | "Chi tiêu Ads" | "Thanh toán" | "Ngưỡng tài khoản" | "Tình trạng TK" | "Doanh số & ROAS" | "Cost sản phẩm" | "Dữ liệu Pancake";
+type Tab = "Tổng quan" | "Chi tiêu Ads" | "Thanh toán" | "Ngưỡng tài khoản" | "Tình trạng TK" | "Doanh số & ROAS" | "Cost sản phẩm" | "Dữ liệu Pancake" | "Tài khoản kết nối";
 
 const tabs: { name: Tab; icon: string }[] = [
   { name: "Tổng quan", icon: "⌂" }, { name: "Chi tiêu Ads", icon: "↗" }, { name: "Thanh toán", icon: "▣" },
   { name: "Ngưỡng tài khoản", icon: "◒" }, { name: "Tình trạng TK", icon: "●" }, { name: "Doanh số & ROAS", icon: "◇" },
   { name: "Cost sản phẩm", icon: "◎" }, { name: "Dữ liệu Pancake", icon: "≋" },
+  { name: "Tài khoản kết nối", icon: "⚙" },
 ];
 
 function Sparkline({ values, color = "#63d9b7" }: { values: number[]; color?: string }) {
@@ -57,9 +58,11 @@ function StatCard({ label, value, delta, tone, values }: { label: string; value:
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("Tổng quan");
-  const [range, setRange] = useState("Hôm nay");
+  const [fromDate, setFromDate] = useState("2026-07-23");
+  const [toDate, setToDate] = useState("2026-07-29");
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [showConnect, setShowConnect] = useState(false);
   const filtered = useMemo(() => accounts.filter(a => `${a.name} ${a.bm}`.toLowerCase().includes(query.toLowerCase())), [query]);
   const totalSpend = accounts.reduce((s, a) => s + a.spent, 0);
   const totalRevenue = accounts.reduce((s, a) => s + a.revenue, 0);
@@ -82,7 +85,7 @@ export default function Home() {
     </aside>
 
     <section className="content">
-      <header><div><h1>{tab}</h1><p>Dữ liệu vận hành Ads & bán hàng · Thứ Tư, 29 tháng 7, 2026</p></div><div className="actions"><button className="date">◷ <select value={range} onChange={e => setRange(e.target.value)}><option>Hôm nay</option><option>7 ngày qua</option><option>Tháng này</option></select></button><button className="export" onClick={exportReport}>⇩ Xuất báo cáo</button></div></header>
+      <header><div><h1>{tab}</h1><p>Dữ liệu vận hành Ads & bán hàng · {fromDate.split("-").reverse().join("/")} — {toDate.split("-").reverse().join("/")}</p></div><div className="actions"><div className="date-range"><span>◷</span><label>Từ ngày<input aria-label="Từ ngày" type="date" value={fromDate} max={toDate} onChange={e => setFromDate(e.target.value)} /></label><i>→</i><label>Đến ngày<input aria-label="Đến ngày" type="date" value={toDate} min={fromDate} onChange={e => setToDate(e.target.value)} /></label><button onClick={()=>setNotice(`Đã áp dụng dữ liệu từ ${fromDate.split("-").reverse().join("/")} đến ${toDate.split("-").reverse().join("/")}`)}>Áp dụng</button></div><button className="export" onClick={exportReport}>⇩ Xuất báo cáo</button></div></header>
 
       {tab === "Tổng quan" && <>
         <div className="stats">
@@ -140,8 +143,27 @@ export default function Home() {
         <div className="mini-stats"><Mini label="Đơn mới" value="486"/><Mini label="Đã xác nhận" value="413" accent/><Mini label="Đang giao" value="356"/><Mini label="Hoàn / hủy" value="31"/></div>
         <DailyTable />
       </DetailPage>}
+      {tab === "Tài khoản kết nối" && <DetailPage title="Tài khoản kết nối" subtitle="Đăng nhập, xác minh và quản lý các nguồn dữ liệu đang đồng bộ">
+        <div className="connection-summary">
+          <div><span className="pulse"/><b>2 nguồn dữ liệu đã kết nối</b><p>Quyền truy cập được kiểm tra định kỳ</p></div>
+          <button className="connect-primary" onClick={()=>setShowConnect(true)}>＋ Kết nối tài khoản</button>
+        </div>
+        <div className="mini-stats"><Mini label="Tài khoản đã đăng nhập" value="2" accent/><Mini label="Tài khoản quảng cáo" value="5"/><Mini label="BM được cấp quyền" value="3"/><Mini label="Cần xác minh lại" value="0"/></div>
+        <section className="panel connected-table">
+          <div className="panel-head"><div><h2>Bảng tài khoản đã đăng nhập</h2><p>Danh tính, quyền truy cập và lần xác minh gần nhất</p></div><button className="verify-all" onClick={()=>setNotice("Đã xác minh tất cả kết nối")}>✓ Xác minh tất cả</button></div>
+          <div className="table-wrap"><table><thead><tr><th>NỀN TẢNG</th><th>TÀI KHOẢN ĐĂNG NHẬP</th><th>QUYỀN TRUY CẬP</th><th>TÀI SẢN</th><th>XÁC MINH GẦN NHẤT</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>
+            <tr><td><div className="platform"><span className="account-icon">f</span><b>Meta Business</b></div></td><td><b>Quang Trần</b><small className="sku">q***@gmail.com</small></td><td>Ads read · Business read</td><td>3 BM · 5 tài khoản Ads</td><td>29/07/2026 · 14:42</td><td><span className="status live">● Đã xác minh</span></td><td><button className="row-action" onClick={()=>setNotice("Kết nối Meta đang hoạt động bình thường")}>Kiểm tra</button></td></tr>
+            <tr><td><div className="platform"><span className="pancake small">P</span><b>Pancake POS</b></div></td><td><b>AdPilot Store</b><small className="sku">Workspace chính</small></td><td>Đơn hàng · Sản phẩm · POS</td><td>4 pages · 1 POS</td><td>29/07/2026 · 14:40</td><td><span className="status live">● Đã xác minh</span></td><td><button className="row-action" onClick={()=>setNotice("Kết nối Pancake đang hoạt động bình thường")}>Kiểm tra</button></td></tr>
+          </tbody></table></div>
+        </section>
+        <div className="security-note"><span>⌾</span><div><b>Kết nối an toàn bằng OAuth</b><p>Mật khẩu không được lưu trên AdPilot. Bạn có thể thu hồi quyền truy cập bất cứ lúc nào từ Meta hoặc Pancake.</p></div></div>
+      </DetailPage>}
       <footer className="page-footer"><span>AdPilot Ops · Dữ liệu mẫu minh họa</span><span><i className="live-dot"/> Hệ thống hoạt động bình thường</span></footer>
     </section>
+    {showConnect && <div className="modal-backdrop" onMouseDown={()=>setShowConnect(false)}><section className="connect-modal" role="dialog" aria-modal="true" aria-label="Kết nối tài khoản" onMouseDown={e=>e.stopPropagation()}><button className="modal-close" aria-label="Đóng" onClick={()=>setShowConnect(false)}>×</button><h2>Kết nối nguồn dữ liệu</h2><p>Chọn tài khoản bạn muốn đăng nhập và cấp quyền đọc báo cáo.</p><div className="provider-list">
+      <button onClick={()=>setNotice("Cần cấu hình Meta App ID và App Secret để mở đăng nhập thật")}><span className="account-icon large">f</span><span><b>Đăng nhập bằng Facebook</b><small>Kết nối Business Manager và tài khoản quảng cáo</small></span><em>→</em></button>
+      <button onClick={()=>setNotice("Cần cấu hình Pancake OAuth Client để mở đăng nhập thật")}><span className="pancake">P</span><span><b>Đăng nhập Pancake</b><small>Kết nối POS, pages, đơn hàng và sản phẩm</small></span><em>→</em></button>
+    </div><div className="oauth-info">Bạn sẽ được chuyển sang trang đăng nhập chính thức của nhà cung cấp. AdPilot chỉ nhận mã xác thực và quyền bạn đồng ý cấp.</div></section></div>}
     {notice && <div className="toast">✓ {notice}</div>}
   </main>;
 }
