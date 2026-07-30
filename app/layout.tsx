@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { PwaRegister } from "./PwaRegister";
+import { FirebaseAuthGate } from "./FirebaseAuthGate";
 
 export const metadata: Metadata = {
   title: "AdPilot Ops — Facebook Ads & Pancake",
@@ -31,5 +32,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="vi"><body>{children}<PwaRegister /></body></html>;
+  return <html lang="vi"><body><FirebaseAuthGate>{children}</FirebaseAuthGate><PwaRegister /></body></html>;
 }
