@@ -1,40 +1,16 @@
-# Kích hoạt Firebase cho AdPilot
+# Kích hoạt Firebase và kết nối dữ liệu
 
-## 1. Tạo và cấu hình Firebase
+1. Tạo Firebase Web App, bật Authentication bằng Email/Password và Firestore.
+2. Thêm sáu biến `FIREBASE_*` trong `.env.example` vào môi trường Sites.
+3. Áp dụng `firestore.rules` bằng Firebase CLI hoặc Firebase Console.
+4. Tạo user chủ sở hữu đầu tiên trong Firebase Authentication, rồi tạo
+   `admins/{UID}` trong Firestore với `role: "owner"` và `active: true`.
+5. Tạo Meta App, bật Facebook Login for Business và dùng callback:
+   `https://adpilot-ops-vn.bindqbin.chatgpt.site/api/integrations/facebook/callback`.
+6. Thêm `META_APP_ID`, `META_APP_SECRET`, `OAUTH_STATE_SECRET` và
+   `INTEGRATION_ENCRYPTION_KEY` vào môi trường Sites.
+7. Với Pancake, quản trị viên tự tạo API Key trong POS tại
+   Cài đặt → Kết nối bên thứ ba → Webhook/API, rồi nhập key trong AdPilot.
 
-1. Tạo Firebase Project tại https://console.firebase.google.com.
-2. Project settings → Your apps → Web → Register app.
-3. Authentication → Sign-in method → bật Email/Password.
-4. Firestore Database → Create database → chọn Production mode.
-5. Cài Firebase CLI, đăng nhập và chạy `firebase deploy --only firestore:rules`
-   trong thư mục dự án để áp dụng `firestore.rules`.
-
-## 2. Thêm cấu hình vào Sites
-
-Thêm sáu biến môi trường sau bằng các giá trị trong `firebaseConfig` của Web App:
-
-- `FIREBASE_API_KEY`
-- `FIREBASE_AUTH_DOMAIN`
-- `FIREBASE_PROJECT_ID`
-- `FIREBASE_STORAGE_BUCKET`
-- `FIREBASE_MESSAGING_SENDER_ID`
-- `FIREBASE_APP_ID`
-
-Đây là cấu hình nhận diện Firebase Web App, không phải mật khẩu quản trị.
-
-## 3. Tạo chủ sở hữu đầu tiên
-
-1. Firebase Authentication → Users → Add user, nhập email và mật khẩu đầu tiên.
-2. Sao chép UID của user vừa tạo.
-3. Firestore → tạo collection `admins`, document ID bằng UID.
-4. Thêm các field:
-   - `uid`: UID vừa sao chép (string)
-   - `email`: email viết thường (string)
-   - `displayName`: tên hiển thị (string)
-   - `role`: `owner` (string)
-   - `active`: `true` (boolean)
-   - `createdAt`: timestamp hiện tại
-
-Sau đó đăng nhập AdPilot. Chủ sở hữu có thể mời, khóa hoặc mở các quản trị viên
-khác ngay trong ứng dụng. Không chia sẻ mật khẩu qua chat hoặc lưu mật khẩu vào
-mã nguồn.
+Không lưu mật khẩu, Meta App Secret, API Key Pancake hoặc khóa mã hóa trong mã
+nguồn hay trong chat.
