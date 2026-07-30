@@ -1,11 +1,19 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { PwaRegister } from "./PwaRegister";
 
 export const metadata: Metadata = {
   title: "AdPilot Ops — Facebook Ads & Pancake",
   description: "Dashboard quản trị chi tiêu quảng cáo, thanh toán, tài khoản và doanh số Pancake.",
-  icons: { icon: "/favicon.svg" },
-  metadataBase: new URL("https://adpilot-ops.sites.openai.com"),
+  applicationName: "AdPilot Ops",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "AdPilot" },
+  formatDetection: { telephone: false },
+  metadataBase: new URL("https://adpilot-ops-vn.bindqbin.chatgpt.site"),
   openGraph: {
     title: "AdPilot Ops",
     description: "Facebook Ads & Pancake",
@@ -14,6 +22,14 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0a0d13",
+};
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="vi"><body>{children}</body></html>;
+  return <html lang="vi"><body>{children}<PwaRegister /></body></html>;
 }
