@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { getApps } from "firebase/app";
+import { getAuth } from "firebase/auth";
 
 const money = (value: number) =>
   new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
@@ -63,6 +65,10 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [showConnect, setShowConnect] = useState(false);
+  const [connectMode, setConnectMode] = useState<"choose" | "pancake">("choose");
+  const [pancakeApiKey, setPancakeApiKey] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connections, setConnections] = useState<Array<{provider:string;accountName:string;externalAccountId:string;status:string;updatedAt:number;metadata?:{shops?:Array<{id:number;name:string;pageCount:number}>}}>>([]);
   const filtered = useMemo(() => accounts.filter(a => `${a.name} ${a.bm}`.toLowerCase().includes(query.toLowerCase())), [query]);
   const totalSpend = accounts.reduce((s, a) => s + a.spent, 0);
   const totalRevenue = accounts.reduce((s, a) => s + a.revenue, 0);
@@ -74,6 +80,75 @@ export default function Home() {
     const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "bao-cao-ads-29-07-2026.csv"; link.click(); URL.revokeObjectURL(url);
     setNotice("Đã xuất báo cáo CSV");
     setTimeout(() => setNotice(""), 2500);
+  };
+
+  const firebaseToken = async () => {
+    const app = getApps()[0];
+    const user = app ? getAuth(app).currentUser : null;
+    if (!user) throw new Error("Bạn cần đăng nhập quản trị trước.");
+    return user.getIdToken();
+  };
+
+  const loadConnections = async () => {
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/status", { headers: { Authorization: `Bearer ${token}` } });
+      if (response.ok) {
+        const data = await response.json() as { connections: typeof connections };
+        setConnections(data.connections);
+      }
+    } catch {
+      // Authentication gate will handle signed-out state.
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "Tài khoản kết nối") loadConnections();
+    const connection = new URLSearchParams(window.location.search).get("connection");
+    if (connection === "facebook-success") {
+      setTab("Tài khoản kết nối");
+      setNotice("Đã kết nối Facebook Business thành công.");
+      window.history.replaceState({}, "", "/");
+    }
+  }, [tab]);
+
+  const connectFacebook = async () => {
+    setConnecting(true);
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/facebook/start", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !data.url) throw new Error(data.error);
+      window.location.assign(data.url);
+    } catch {
+      setNotice("Facebook chưa được cấu hình App ID hoặc bạn chưa đăng nhập quản trị.");
+      setConnecting(false);
+    }
+  };
+
+  const connectPancake = async () => {
+    setConnecting(true);
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/pancake/connect", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: pancakeApiKey }),
+      });
+      if (!response.ok) throw new Error("invalid");
+      setPancakeApiKey("");
+      setShowConnect(false);
+      setConnectMode("choose");
+      await loadConnections();
+      setNotice("Đã kết nối và xác minh Pancake POS.");
+    } catch {
+      setNotice("API Key Pancake không hợp lệ hoặc không có quyền truy cập shop.");
+    } finally {
+      setConnecting(false);
+    }
   };
 
   return <main>
@@ -145,25 +220,25 @@ export default function Home() {
       </DetailPage>}
       {tab === "Tài khoản kết nối" && <DetailPage title="Tài khoản kết nối" subtitle="Đăng nhập, xác minh và quản lý các nguồn dữ liệu đang đồng bộ">
         <div className="connection-summary">
-          <div><span className="pulse"/><b>2 nguồn dữ liệu đã kết nối</b><p>Quyền truy cập được kiểm tra định kỳ</p></div>
+          <div><span className="pulse"/><b>{connections.length} nguồn dữ liệu đã kết nối</b><p>Quyền truy cập được kiểm tra định kỳ</p></div>
           <button className="connect-primary" onClick={()=>setShowConnect(true)}>＋ Kết nối tài khoản</button>
         </div>
-        <div className="mini-stats"><Mini label="Tài khoản đã đăng nhập" value="2" accent/><Mini label="Tài khoản quảng cáo" value="5"/><Mini label="BM được cấp quyền" value="3"/><Mini label="Cần xác minh lại" value="0"/></div>
+        <div className="mini-stats"><Mini label="Nguồn đã đăng nhập" value={String(connections.length)} accent/><Mini label="Facebook Business" value={connections.some(item=>item.provider==="facebook")?"Đã kết nối":"Chưa kết nối"}/><Mini label="Pancake POS" value={connections.some(item=>item.provider==="pancake")?"Đã kết nối":"Chưa kết nối"}/><Mini label="Cần xác minh lại" value={String(connections.filter(item=>item.status!=="active").length)}/></div>
         <section className="panel connected-table">
-          <div className="panel-head"><div><h2>Bảng tài khoản đã đăng nhập</h2><p>Danh tính, quyền truy cập và lần xác minh gần nhất</p></div><button className="verify-all" onClick={()=>setNotice("Đã xác minh tất cả kết nối")}>✓ Xác minh tất cả</button></div>
+          <div className="panel-head"><div><h2>Bảng tài khoản đã đăng nhập</h2><p>Danh tính, quyền truy cập và lần xác minh gần nhất</p></div><button className="verify-all" onClick={loadConnections}>↻ Làm mới</button></div>
           <div className="table-wrap"><table><thead><tr><th>NỀN TẢNG</th><th>TÀI KHOẢN ĐĂNG NHẬP</th><th>QUYỀN TRUY CẬP</th><th>TÀI SẢN</th><th>XÁC MINH GẦN NHẤT</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>
-            <tr><td><div className="platform"><span className="account-icon">f</span><b>Meta Business</b></div></td><td><b>Quang Trần</b><small className="sku">q***@gmail.com</small></td><td>Ads read · Business read</td><td>3 BM · 5 tài khoản Ads</td><td>29/07/2026 · 14:42</td><td><span className="status live">● Đã xác minh</span></td><td><button className="row-action" onClick={()=>setNotice("Kết nối Meta đang hoạt động bình thường")}>Kiểm tra</button></td></tr>
-            <tr><td><div className="platform"><span className="pancake small">P</span><b>Pancake POS</b></div></td><td><b>AdPilot Store</b><small className="sku">Workspace chính</small></td><td>Đơn hàng · Sản phẩm · POS</td><td>4 pages · 1 POS</td><td>29/07/2026 · 14:40</td><td><span className="status live">● Đã xác minh</span></td><td><button className="row-action" onClick={()=>setNotice("Kết nối Pancake đang hoạt động bình thường")}>Kiểm tra</button></td></tr>
+            {connections.map(item=><tr key={item.provider}><td><div className="platform"><span className={item.provider==="facebook"?"account-icon":"pancake small"}>{item.provider==="facebook"?"f":"P"}</span><b>{item.provider==="facebook"?"Meta Business":"Pancake POS"}</b></div></td><td><b>{item.accountName}</b><small className="sku">ID: {item.externalAccountId}</small></td><td>{item.provider==="facebook"?"Ads read · Business read":"Đơn hàng · Sản phẩm · POS"}</td><td>{item.provider==="pancake"?`${item.metadata?.shops?.length??1} shop`:"BM và tài khoản Ads"}</td><td>{new Date(item.updatedAt).toLocaleString("vi-VN")}</td><td><span className={`status ${item.status==="active"?"live":"die"}`}>● {item.status==="active"?"Đã xác minh":"Cần xác minh"}</span></td><td><button className="row-action" onClick={loadConnections}>Kiểm tra</button></td></tr>)}
+            {!connections.length&&<tr><td colSpan={7}><div className="empty-connections">Chưa có nguồn dữ liệu nào. Nhấn “Kết nối tài khoản” để bắt đầu.</div></td></tr>}
           </tbody></table></div>
         </section>
         <div className="security-note"><span>⌾</span><div><b>Kết nối an toàn bằng OAuth</b><p>Mật khẩu không được lưu trên AdPilot. Bạn có thể thu hồi quyền truy cập bất cứ lúc nào từ Meta hoặc Pancake.</p></div></div>
       </DetailPage>}
       <footer className="page-footer"><span>AdPilot Ops · Dữ liệu mẫu minh họa</span><span><i className="live-dot"/> Hệ thống hoạt động bình thường</span></footer>
     </section>
-    {showConnect && <div className="modal-backdrop" onMouseDown={()=>setShowConnect(false)}><section className="connect-modal" role="dialog" aria-modal="true" aria-label="Kết nối tài khoản" onMouseDown={e=>e.stopPropagation()}><button className="modal-close" aria-label="Đóng" onClick={()=>setShowConnect(false)}>×</button><h2>Kết nối nguồn dữ liệu</h2><p>Chọn tài khoản bạn muốn đăng nhập và cấp quyền đọc báo cáo.</p><div className="provider-list">
-      <button onClick={()=>setNotice("Cần cấu hình Meta App ID và App Secret để mở đăng nhập thật")}><span className="account-icon large">f</span><span><b>Đăng nhập bằng Facebook</b><small>Kết nối Business Manager và tài khoản quảng cáo</small></span><em>→</em></button>
-      <button onClick={()=>setNotice("Cần cấu hình Pancake OAuth Client để mở đăng nhập thật")}><span className="pancake">P</span><span><b>Đăng nhập Pancake</b><small>Kết nối POS, pages, đơn hàng và sản phẩm</small></span><em>→</em></button>
-    </div><div className="oauth-info">Bạn sẽ được chuyển sang trang đăng nhập chính thức của nhà cung cấp. AdPilot chỉ nhận mã xác thực và quyền bạn đồng ý cấp.</div></section></div>}
+    {showConnect && <div className="modal-backdrop" onMouseDown={()=>{setShowConnect(false);setConnectMode("choose")}}><section className="connect-modal" role="dialog" aria-modal="true" aria-label="Kết nối tài khoản" onMouseDown={e=>e.stopPropagation()}><button className="modal-close" aria-label="Đóng" onClick={()=>{setShowConnect(false);setConnectMode("choose")}}>×</button><h2>{connectMode==="choose"?"Kết nối nguồn dữ liệu":"Kết nối Pancake POS"}</h2><p>{connectMode==="choose"?"Chọn tài khoản bạn muốn đăng nhập và cấp quyền đọc báo cáo.":"Tạo API Key trong Pancake POS rồi dán vào bên dưới. Không nhập mật khẩu Pancake."}</p>{connectMode==="choose"?<div className="provider-list">
+      <button disabled={connecting} onClick={connectFacebook}><span className="account-icon large">f</span><span><b>Đăng nhập bằng Facebook</b><small>Kết nối Business Manager và tài khoản quảng cáo</small></span><em>→</em></button>
+      <button onClick={()=>setConnectMode("pancake")}><span className="pancake">P</span><span><b>Kết nối Pancake POS</b><small>Đồng bộ shop, pages, đơn hàng và sản phẩm</small></span><em>→</em></button>
+    </div>:<div className="pancake-key-form"><label>API Key Pancake<input type="password" autoComplete="off" value={pancakeApiKey} onChange={e=>setPancakeApiKey(e.target.value)} placeholder="Dán API Key tại đây"/></label><small>Pancake POS → Cài đặt → Kết nối bên thứ ba → Webhook/API → Tạo API Key.</small><div><button onClick={()=>setConnectMode("choose")}>Quay lại</button><button disabled={connecting||pancakeApiKey.length<12} onClick={connectPancake}>{connecting?"Đang xác minh…":"Kết nối & đồng bộ"}</button></div></div>}<div className="oauth-info">{connectMode==="choose"?"Facebook sẽ mở trang cấp quyền chính thức. AdPilot không nhìn thấy mật khẩu Facebook của bạn.":"API Key được mã hóa AES-GCM và chỉ lưu ở máy chủ."}</div></section></div>}
     {notice && <div className="toast">✓ {notice}</div>}
   </main>;
 }

@@ -1,4 +1,16 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const integrations = sqliteTable("integrations", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  provider: text("provider").notNull(),
+  encryptedToken: text("encrypted_token").notNull(),
+  tokenIv: text("token_iv").notNull(),
+  tokenExpiresAt: integer("token_expires_at"),
+  accountName: text("account_name"),
+  externalAccountId: text("external_account_id"),
+  metadata: text("metadata"),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
