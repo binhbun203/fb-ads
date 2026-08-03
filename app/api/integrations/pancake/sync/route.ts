@@ -35,29 +35,41 @@ const orderItems = (order: PancakeOrder) => {
   return Array.isArray(rows) ? rows as PancakeItem[] : [];
 };
 
-const cancelled = (status: string) =>
-  /cancel|cancelled|canceled|hủy|returned|return|hoàn/.test(status.toLowerCase());
+const returnedStatuses = new Set([-1, 4, 5, 15]);
+const cancelled = (order: PancakeOrder) => {
+  const statusCode = numberValue(order.status);
+  const statusName = textValue(order.status_name, order.shipping_status, order.order_status);
+  return returnedStatuses.has(statusCode) ||
+    /cancel|cancelled|canceled|hủy|returned|return|hoàn/.test(statusName.toLowerCase());
+};
 
 async function fetchOrders(shopId: number, apiKey: string, from: string, to: string) {
   const orders: PancakeOrder[] = [];
-  for (let page = 1; page <= 10; page += 1) {
+  const startDateTime = Math.floor(new Date(`${from}T00:00:00+07:00`).getTime() / 1000);
+  const endDateTime = Math.floor(new Date(`${to}T23:59:59+07:00`).getTime() / 1000);
+  let totalPages = 1;
+  for (let page = 1; page <= totalPages && page <= 500; page += 1) {
     const url = new URL(`https://pos.pages.fm/api/v1/shops/${shopId}/orders`);
     url.searchParams.set("api_key", apiKey);
     url.searchParams.set("page_number", String(page));
     url.searchParams.set("page_size", "100");
-    url.searchParams.set("date_start", `${from}T00:00:00`);
-    url.searchParams.set("date_end", `${to}T23:59:59`);
+    url.searchParams.set("updateStatus", "inserted_at");
+    url.searchParams.set("startDateTime", String(startDateTime));
+    url.searchParams.set("endDateTime", String(endDateTime));
+    url.searchParams.set("option_sort", "inserted_at_asc");
     const response = await fetch(url, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`pancake_${response.status}`);
     const payload = await response.json() as {
       success?: boolean;
       orders?: PancakeOrder[];
       data?: PancakeOrder[];
+      total_pages?: number;
     };
     const rows = payload.orders ?? payload.data ?? [];
     if (!Array.isArray(rows)) throw new Error("pancake_invalid_orders");
     orders.push(...rows);
-    if (rows.length < 100) break;
+    totalPages = Math.max(1, Number(payload.total_pages ?? 1));
+    if (rows.length === 0) break;
   }
   return orders.filter(order => {
     const day = dayOf(order);
@@ -93,8 +105,7 @@ export async function POST(request: Request) {
     for (const { orders } of shopOrders) {
       for (const order of orders) {
         const date = dayOf(order);
-        const status = textValue(order.status, order.shipping_status, order.order_status);
-        const isCancelled = cancelled(status);
+        const isCancelled = cancelled(order);
         const total = isCancelled ? 0 : orderTotal(order);
         orderCount += 1;
         revenue += total;
@@ -105,14 +116,21 @@ export async function POST(request: Request) {
         if (isCancelled) day.cancelled += 1;
 
         for (const item of orderItems(order)) {
-          const variation = (item.variation && typeof item.variation === "object")
-            ? item.variation as Record<string, unknown>
+          const variation = (item.variation_info && typeof item.variation_info === "object")
+            ? item.variation_info as Record<string, unknown>
             : {};
-          const sku = textValue(item.sku, item.product_sku, variation.sku, item.id) || "Không có SKU";
-          const name = textValue(item.product_name, item.name, variation.name, item.display_name) || sku;
+          const sku = textValue(
+            variation.display_id,
+            variation.product_display_id,
+            variation.barcode,
+            item.variation_id,
+            item.product_id,
+          ) || "Không có mã";
+          const name = textValue(variation.name, item.product_name, item.name) || sku;
           const quantity = Math.max(1, numberValue(item.quantity, item.count, 1));
-          const itemRevenue = numberValue(item.total_price, item.price, variation.retail_price) * quantity;
-          const itemCost = numberValue(item.cost_price, item.cost, variation.cost_price) * quantity;
+          const unitRevenue = numberValue(variation.retail_price, item.price);
+          const itemRevenue = Math.max(0, unitRevenue * quantity - numberValue(item.discount_each_product));
+          const itemCost = numberValue(variation.avg_price, variation.last_imported_price) * quantity;
           const product = productMap.get(sku) ?? { name, sku, orders: 0, revenue: 0, cost: 0 };
           product.orders += quantity;
           product.revenue += isCancelled ? 0 : itemRevenue;
@@ -129,6 +147,12 @@ export async function POST(request: Request) {
       ...current,
       reportRange: { from, to },
       summary: { orderCount, revenue, cancelledCount },
+      syncQuality: {
+        complete: true,
+        shopCount: shops.length,
+        source: "inserted_at",
+        timezone: "Asia/Ho_Chi_Minh",
+      },
       daily: [...dailyMap.entries()].map(([date, values]) => ({ date, ...values })),
       products: [...productMap.values()].sort((a, b) => b.revenue - a.revenue),
       lastSyncedAt,

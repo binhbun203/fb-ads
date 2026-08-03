@@ -6,6 +6,8 @@ import { getAuth } from "firebase/auth";
 
 const money = (value: number) =>
   new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
+const accountMoney = (value: number, currency: string) =>
+  new Intl.NumberFormat("vi-VN", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 
 type AccountRow = {
   id: string;
@@ -14,6 +16,9 @@ type AccountRow = {
   spent: number;
   yesterday: number;
   threshold: number;
+  balance: number;
+  lifetimeSpent: number;
+  currency: string;
   status: "Live" | "Die";
   orders: number;
   revenue: number;
@@ -27,7 +32,7 @@ type DailyRow = {
   cost: number;
 };
 
-type Tab = "Tổng quan" | "Chi tiêu Ads" | "Thanh toán" | "Ngưỡng tài khoản" | "Tình trạng TK" | "Doanh số & ROAS" | "Cost sản phẩm" | "Dữ liệu Pancake" | "Tài khoản kết nối";
+type Tab = "Tổng quan" | "Chi tiêu Ads" | "Thanh toán" | "Tài chính TK" | "Tình trạng TK" | "Doanh số & ROAS" | "Cost sản phẩm" | "Dữ liệu Pancake" | "Tài khoản kết nối";
 
 type Connection = {
   provider: string;
@@ -61,7 +66,7 @@ type Connection = {
 
 const tabs: { name: Tab; icon: string }[] = [
   { name: "Tổng quan", icon: "⌂" }, { name: "Chi tiêu Ads", icon: "↗" }, { name: "Thanh toán", icon: "▣" },
-  { name: "Ngưỡng tài khoản", icon: "◒" }, { name: "Tình trạng TK", icon: "●" }, { name: "Doanh số & ROAS", icon: "◇" },
+  { name: "Tài chính TK", icon: "◒" }, { name: "Tình trạng TK", icon: "●" }, { name: "Doanh số & ROAS", icon: "◇" },
   { name: "Cost sản phẩm", icon: "◎" }, { name: "Dữ liệu Pancake", icon: "≋" },
   { name: "Tài khoản kết nối", icon: "⚙" },
 ];
@@ -106,6 +111,9 @@ export default function Home() {
       spent: Number(account.periodSpend ?? 0),
       yesterday: previousDaySpend,
       threshold: Number(account.spend_cap ?? 0),
+      balance: Number(account.balance ?? 0),
+      lifetimeSpent: Number(account.amount_spent ?? 0),
+      currency: account.currency || "VND",
       status: account.account_status === 1 ? "Live" : "Die",
       orders: 0,
       revenue: 0,
@@ -347,15 +355,16 @@ export default function Home() {
         <DailyTable rows={daily} />
       </DetailPage>}
 
-      {tab === "Thanh toán" && <DetailPage title="Bill & thanh toán" subtitle="Kiểm soát hóa đơn đã thanh toán theo ngày và tháng">
+      {tab === "Thanh toán" && <DetailPage title="Bill & thanh toán" subtitle="Meta không cung cấp lịch sử trừ thẻ qua Marketing API">
         <div className="mini-stats"><Mini label="Đã thanh toán trong kỳ" value={money(0)}/><Mini label="Dữ liệu bill" value="Chưa đồng bộ"/><Mini label="Số bill" value="0"/><Mini label="Bill chờ xử lý" value="0" accent/></div>
-        <EmptyData message="Meta Marketing API không cung cấp lịch sử giao dịch thanh toán cho kết nối hiện tại." />
+        <div className="data-explainer"><b>Vì sao chưa có bill?</b><p>Meta chỉ trả dữ liệu chi tiêu quảng cáo, số dư và giới hạn chi tiêu. Lịch sử Meta trừ tiền từ thẻ không có trong API hiện tại. Số 0 ở trên có nghĩa là “không có dữ liệu API”, không phải chưa phát sinh thanh toán.</p></div>
       </DetailPage>}
 
-      {tab === "Ngưỡng tài khoản" && <DetailPage title="Ngưỡng thanh toán" subtitle="Theo dõi hạn mức và số ngưỡng còn lại của từng tài khoản">
-        <div className="mini-stats"><Mini label="Tổng ngưỡng" value={money(totalThreshold)}/><Mini label="Chi tiêu trong kỳ" value={money(totalSpend)}/><Mini label="Ngưỡng còn lại" value={money(Math.max(0,totalThreshold-totalSpend))} accent/><Mini label="Có dữ liệu ngưỡng" value={String(accounts.filter(a=>a.threshold>0).length)}/></div>
-        <div className="threshold-grid">{accounts.filter(a=>a.threshold>0).map(a=>{const pc=Math.round(a.spent/a.threshold*100); return <article className="threshold-card" key={a.id}><div><span className="account-icon">f</span><span><b>{a.name}</b><small>{a.bm}</small></span><em>{pc}%</em></div><p><span>Đã dùng {money(a.spent)}</span><span>{money(a.threshold)}</span></p><div className="progress"><i style={{width:`${Math.min(pc,100)}%`}} className={pc>70?"warn":""}/></div><footer>Còn lại <b>{money(Math.max(0,a.threshold-a.spent))}</b></footer></article>})}</div>
-        {!accounts.some(a=>a.threshold>0)&&<EmptyData message="Các tài khoản Meta hiện không trả về ngưỡng chi tiêu."/>}
+      {tab === "Tài chính TK" && <DetailPage title="Tài chính tài khoản Meta" subtitle="Số dư, tổng chi tiêu và giới hạn chi tiêu do Meta trả về">
+        <div className="mini-stats"><Mini label="Chi tiêu khoảng đã chọn" value={money(totalSpend)}/><Mini label="Tổng giới hạn đã đặt" value={money(totalThreshold)}/><Mini label="TK có giới hạn" value={`${accounts.filter(a=>a.threshold>0).length} / ${accounts.length}`} accent/><Mini label="Cập nhật" value={facebook?.metadata?.lastSyncedAt ? new Date(facebook.metadata.lastSyncedAt).toLocaleTimeString("vi-VN") : "Chưa đồng bộ"}/></div>
+        <div className="finance-guide"><span><b>Số dư hiện tại</b><small>Khoản Meta đang ghi nhận chưa thanh toán hoặc tiền còn lại.</small></span><span><b>Tổng đã chi</b><small>Chi tiêu trọn đời của tài khoản.</small></span><span><b>Giới hạn chi tiêu</b><small>Giới hạn do bạn đặt, không phải ngưỡng Meta trừ thẻ.</small></span></div>
+        <div className="threshold-grid">{accounts.map(a=>{const pc=a.threshold>0?Math.round(a.lifetimeSpent/a.threshold*100):0; return <article className="threshold-card finance-card" key={a.id}><div><span className="account-icon">f</span><span><b>{a.name}</b><small>{a.bm} · {a.currency}</small></span><em className={a.status==="Live"?"ok":"off"}>● {a.status}</em></div><div className="finance-values"><p><span>Số dư hiện tại</span><b>{accountMoney(a.balance,a.currency)}</b></p><p><span>Tổng đã chi</span><b>{accountMoney(a.lifetimeSpent,a.currency)}</b></p><p><span>Chi tiêu trong kỳ</span><b>{accountMoney(a.spent,a.currency)}</b></p><p><span>Giới hạn chi tiêu</span><b>{a.threshold>0?accountMoney(a.threshold,a.currency):"Không đặt"}</b></p></div>{a.threshold>0&&<><div className="progress"><i style={{width:`${Math.min(pc,100)}%`}} className={pc>70?"warn":""}/></div><footer>Đã dùng <b>{pc}% giới hạn</b></footer></>}</article>})}</div>
+        {!accounts.length&&<EmptyData message="Chưa có tài khoản Meta. Hãy nhấn “Đồng bộ ngay” để tải lại."/>}
       </DetailPage>}
 
       {tab === "Tình trạng TK" && <DetailPage title="Sức khỏe tài khoản" subtitle="Tổng kết tài khoản live, die và trạng thái phân phối">
