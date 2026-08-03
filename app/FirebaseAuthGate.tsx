@@ -220,7 +220,7 @@ export function FirebaseAuthGate({ children }: { children: ReactNode }) {
     <form onSubmit={submit}>
       {mode === "signup" && <label>Họ và tên<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" required /></label>}
       <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
-      <label>Mật khẩu<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={10} required /></label>
+      <label>Mật khẩu<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "login" ? 6 : 10} required /></label>
       {error && <div className="auth-error">{error}</div>}
       <button className="auth-submit" type="submit">{mode === "login" ? "Đăng nhập" : "Tạo tài khoản"}</button>
     </form>
