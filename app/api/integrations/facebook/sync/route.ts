@@ -21,6 +21,15 @@ type AdAccount = {
   balance?: string;
   spend_cap?: string;
   business?: { id?: string; name?: string };
+  periodSpend?: number;
+  dailySpend?: Array<{ date: string; spend: number; impressions: number; clicks: number }>;
+};
+
+type Insight = {
+  date_start?: string;
+  spend?: string;
+  impressions?: string;
+  clicks?: string;
 };
 
 async function graphAll<T>(initialUrl: string, token: string) {
@@ -49,6 +58,10 @@ export async function POST(request: Request) {
 
   const version = process.env.META_GRAPH_VERSION || "v23.0";
   try {
+    const body = await request.json().catch(() => ({})) as { from?: string; to?: string };
+    const today = new Date().toISOString().slice(0, 10);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(body.from ?? "") ? body.from! : today;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(body.to ?? "") ? body.to! : today;
     const businessesUrl = new URL(`https://graph.facebook.com/${version}/me/businesses`);
     businessesUrl.searchParams.set("fields", "id,name");
     businessesUrl.searchParams.set("limit", "100");
@@ -60,12 +73,31 @@ export async function POST(request: Request) {
     );
     accountsUrl.searchParams.set("limit", "100");
 
-    const [businesses, adAccounts] = await Promise.all([
+    const [businesses, baseAdAccounts] = await Promise.all([
       graphAll<Business>(businessesUrl.toString(), token),
       graphAll<AdAccount>(accountsUrl.toString(), token),
     ]);
+    const adAccounts = await Promise.all(baseAdAccounts.map(async (account) => {
+      const insightsUrl = new URL(`https://graph.facebook.com/${version}/${account.id}/insights`);
+      insightsUrl.searchParams.set("fields", "date_start,spend,impressions,clicks");
+      insightsUrl.searchParams.set("time_increment", "1");
+      insightsUrl.searchParams.set("time_range", JSON.stringify({ since: from, until: to }));
+      insightsUrl.searchParams.set("limit", "500");
+      const insights = await graphAll<Insight>(insightsUrl.toString(), token);
+      const dailySpend = insights.map((row) => ({
+        date: row.date_start ?? "",
+        spend: Number(row.spend ?? 0),
+        impressions: Number(row.impressions ?? 0),
+        clicks: Number(row.clicks ?? 0),
+      }));
+      return {
+        ...account,
+        periodSpend: dailySpend.reduce((sum, row) => sum + row.spend, 0),
+        dailySpend,
+      };
+    }));
     const lastSyncedAt = Date.now();
-    const metadata = { businesses, adAccounts, lastSyncedAt };
+    const metadata = { businesses, adAccounts, reportRange: { from, to }, lastSyncedAt };
     await updateIntegrationMetadata(user.uid, "facebook", metadata);
     return Response.json({
       success: true,
