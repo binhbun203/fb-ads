@@ -36,6 +36,8 @@ const orderItems = (order: PancakeOrder) => {
 };
 
 const returnedStatuses = new Set([-1, 4, 5, 15]);
+const confirmedStatuses = new Set([1, 2, 3, 8, 9, 12, 13, 16, 20]);
+const shippedStatuses = new Set([2, 3, 4, 5, 15, 16]);
 const cancelled = (order: PancakeOrder) => {
   const statusCode = numberValue(order.status);
   const statusName = textValue(order.status_name, order.shipping_status, order.order_status);
@@ -96,24 +98,37 @@ export async function POST(request: Request) {
       shop,
       orders: await fetchOrders(shop.id, apiKey, from, to),
     })));
-    const dailyMap = new Map<string, { orders: number; revenue: number; cost: number; cancelled: number }>();
+    const dailyMap = new Map<string, { orders: number; confirmed: number; shipped: number; revenue: number; cost: number; cancelled: number }>();
     const productMap = new Map<string, { name: string; sku: string; orders: number; revenue: number; cost: number }>();
     let orderCount = 0;
     let revenue = 0;
     let cancelledCount = 0;
+    let confirmedCount = 0;
+    let shippedCount = 0;
+    let completedCount = 0;
+    let newCount = 0;
 
     for (const { orders } of shopOrders) {
       for (const order of orders) {
         const date = dayOf(order);
+        const statusCode = numberValue(order.status);
         const isCancelled = cancelled(order);
-        const total = isCancelled ? 0 : orderTotal(order);
+        const isConfirmed = confirmedStatuses.has(statusCode) && !isCancelled;
+        const isShipped = shippedStatuses.has(statusCode);
+        const total = isConfirmed ? orderTotal(order) : 0;
         orderCount += 1;
         revenue += total;
         if (isCancelled) cancelledCount += 1;
-        const day = dailyMap.get(date) ?? { orders: 0, revenue: 0, cost: 0, cancelled: 0 };
+        if (isConfirmed) confirmedCount += 1;
+        if (isShipped) shippedCount += 1;
+        if ([3, 16].includes(statusCode)) completedCount += 1;
+        if (statusCode === 0) newCount += 1;
+        const day = dailyMap.get(date) ?? { orders: 0, confirmed: 0, shipped: 0, revenue: 0, cost: 0, cancelled: 0 };
         day.orders += 1;
         day.revenue += total;
         if (isCancelled) day.cancelled += 1;
+        if (isConfirmed) day.confirmed += 1;
+        if (isShipped) day.shipped += 1;
 
         for (const item of orderItems(order)) {
           const variation = (item.variation_info && typeof item.variation_info === "object")
@@ -132,11 +147,13 @@ export async function POST(request: Request) {
           const itemRevenue = Math.max(0, unitRevenue * quantity - numberValue(item.discount_each_product));
           const itemCost = numberValue(variation.avg_price, variation.last_imported_price) * quantity;
           const product = productMap.get(sku) ?? { name, sku, orders: 0, revenue: 0, cost: 0 };
-          product.orders += quantity;
-          product.revenue += isCancelled ? 0 : itemRevenue;
-          product.cost += isCancelled ? 0 : itemCost;
+          if (isConfirmed) {
+            product.orders += quantity;
+            product.revenue += itemRevenue;
+          }
+          if (isShipped) product.cost += itemCost;
           productMap.set(sku, product);
-          day.cost += isCancelled ? 0 : itemCost;
+          if (isShipped) day.cost += itemCost;
         }
         dailyMap.set(date, day);
       }
@@ -146,7 +163,15 @@ export async function POST(request: Request) {
     const metadata = {
       ...current,
       reportRange: { from, to },
-      summary: { orderCount, revenue, cancelledCount },
+      summary: {
+        orderCount,
+        confirmedCount,
+        shippedCount,
+        completedCount,
+        newCount,
+        revenue,
+        cancelledCount,
+      },
       syncQuality: {
         complete: true,
         shopCount: shops.length,

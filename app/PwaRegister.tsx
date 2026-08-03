@@ -15,7 +15,16 @@ export function PwaRegister() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      navigator.serviceWorker.register("/sw.js").then((registration) => {
+        void registration.update();
+      }).catch(() => undefined);
+      const reloadForUpdate = () => {
+        if (sessionStorage.getItem("adpilot-sw-reloaded") === "1") return;
+        sessionStorage.setItem("adpilot-sw-reloaded", "1");
+        window.location.reload();
+      };
+      navigator.serviceWorker.addEventListener("controllerchange", reloadForUpdate);
+      window.setTimeout(() => sessionStorage.removeItem("adpilot-sw-reloaded"), 10_000);
     }
 
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
