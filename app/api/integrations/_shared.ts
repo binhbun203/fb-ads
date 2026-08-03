@@ -191,3 +191,14 @@ export async function loadIntegrationToken(userId: string, provider: string) {
   if (!row) return null;
   return decryptToken(row.encrypted_token, row.token_iv);
 }
+
+export async function updateIntegrationMetadata(
+  userId: string,
+  provider: string,
+  metadata: unknown,
+) {
+  await ensureIntegrationTable();
+  await env.DB.prepare(
+    "UPDATE integrations SET metadata = ?, updated_at = ?, status = 'active' WHERE user_id = ? AND provider = ?",
+  ).bind(JSON.stringify(metadata), Date.now(), userId, provider).run();
+}

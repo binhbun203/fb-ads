@@ -38,6 +38,27 @@ const products = [
 
 type Tab = "Tổng quan" | "Chi tiêu Ads" | "Thanh toán" | "Ngưỡng tài khoản" | "Tình trạng TK" | "Doanh số & ROAS" | "Cost sản phẩm" | "Dữ liệu Pancake" | "Tài khoản kết nối";
 
+type Connection = {
+  provider: string;
+  accountName: string;
+  externalAccountId: string;
+  status: string;
+  updatedAt: number;
+  metadata?: {
+    shops?: Array<{ id: number; name: string; pageCount: number }>;
+    businesses?: Array<{ id: string; name: string }>;
+    adAccounts?: Array<{
+      id: string;
+      account_id?: string;
+      name?: string;
+      account_status?: number;
+      currency?: string;
+      business?: { id?: string; name?: string };
+    }>;
+    lastSyncedAt?: number;
+  };
+};
+
 const tabs: { name: Tab; icon: string }[] = [
   { name: "Tổng quan", icon: "⌂" }, { name: "Chi tiêu Ads", icon: "↗" }, { name: "Thanh toán", icon: "▣" },
   { name: "Ngưỡng tài khoản", icon: "◒" }, { name: "Tình trạng TK", icon: "●" }, { name: "Doanh số & ROAS", icon: "◇" },
@@ -69,7 +90,8 @@ export default function Home() {
   const [metaAppSecret, setMetaAppSecret] = useState("");
   const [pancakeApiKey, setPancakeApiKey] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [connections, setConnections] = useState<Array<{provider:string;accountName:string;externalAccountId:string;status:string;updatedAt:number;metadata?:{shops?:Array<{id:number;name:string;pageCount:number}>}}>>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const filtered = useMemo(() => accounts.filter(a => `${a.name} ${a.bm}`.toLowerCase().includes(query.toLowerCase())), [query]);
   const totalSpend = accounts.reduce((s, a) => s + a.spent, 0);
   const totalRevenue = accounts.reduce((s, a) => s + a.revenue, 0);
@@ -100,6 +122,30 @@ export default function Home() {
       }
     } catch {
       // Authentication gate will handle signed-out state.
+    }
+  };
+
+  const syncFacebookAssets = async () => {
+    setSyncing(true);
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/facebook/sync", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json() as {
+        businessCount?: number;
+        adAccountCount?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error);
+      await loadConnections();
+      setNotice(`Đã đồng bộ ${data.businessCount ?? 0} BM và ${data.adAccountCount ?? 0} tài khoản quảng cáo.`);
+    } catch (cause) {
+      const code = cause instanceof Error ? cause.message : "unknown";
+      setNotice(`Không thể đồng bộ Meta (${code}). Hãy kết nối lại Facebook nếu quyền đã hết hạn.`);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -174,7 +220,7 @@ export default function Home() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">A</div><div><b>AdPilot</b><small>Ops Console</small></div></div>
       <nav>{tabs.map(t => <button key={t.name} className={tab === t.name ? "active" : ""} onClick={() => setTab(t.name)}><span>{t.icon}</span>{t.name}</button>)}</nav>
-      <div className="sync-card"><div><span className="pulse" /><b>Đồng bộ dữ liệu</b></div><p>Facebook Ads & Pancake</p><small>Cập nhật 2 phút trước</small><button onClick={() => { setNotice("Đã đồng bộ dữ liệu mới nhất"); setTimeout(() => setNotice(""), 2500); }}>↻ Đồng bộ ngay</button></div>
+      <div className="sync-card"><div><span className="pulse" /><b>Đồng bộ dữ liệu</b></div><p>Facebook Ads & Pancake</p><small>{connections.find(item=>item.provider==="facebook")?.metadata?.lastSyncedAt ? `Meta: ${new Date(connections.find(item=>item.provider==="facebook")!.metadata!.lastSyncedAt!).toLocaleString("vi-VN")}` : "Chưa đồng bộ tài sản Meta"}</small><button disabled={syncing} onClick={syncFacebookAssets}>↻ {syncing ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button></div>
       <div className="profile"><div className="avatar">QT</div><div><b>Quản trị viên</b><small>admin@adpilot.vn</small></div><span>•••</span></div>
     </aside>
 
@@ -246,7 +292,7 @@ export default function Home() {
         <section className="panel connected-table">
           <div className="panel-head"><div><h2>Bảng tài khoản đã đăng nhập</h2><p>Danh tính, quyền truy cập và lần xác minh gần nhất</p></div><button className="verify-all" onClick={loadConnections}>↻ Làm mới</button></div>
           <div className="table-wrap"><table><thead><tr><th>NỀN TẢNG</th><th>TÀI KHOẢN ĐĂNG NHẬP</th><th>QUYỀN TRUY CẬP</th><th>TÀI SẢN</th><th>XÁC MINH GẦN NHẤT</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>
-            {connections.map(item=><tr key={item.provider}><td><div className="platform"><span className={item.provider==="facebook"?"account-icon":"pancake small"}>{item.provider==="facebook"?"f":"P"}</span><b>{item.provider==="facebook"?"Meta Business":"Pancake POS"}</b></div></td><td><b>{item.accountName}</b><small className="sku">ID: {item.externalAccountId}</small></td><td>{item.provider==="facebook"?"Ads read · Business read":"Đơn hàng · Sản phẩm · POS"}</td><td>{item.provider==="pancake"?`${item.metadata?.shops?.length??1} shop`:"BM và tài khoản Ads"}</td><td>{new Date(item.updatedAt).toLocaleString("vi-VN")}</td><td><span className={`status ${item.status==="active"?"live":"die"}`}>● {item.status==="active"?"Đã xác minh":"Cần xác minh"}</span></td><td><button className="row-action" onClick={loadConnections}>Kiểm tra</button></td></tr>)}
+            {connections.map(item=><tr key={item.provider}><td><div className="platform"><span className={item.provider==="facebook"?"account-icon":"pancake small"}>{item.provider==="facebook"?"f":"P"}</span><b>{item.provider==="facebook"?"Meta Business":"Pancake POS"}</b></div></td><td><b>{item.accountName}</b><small className="sku">ID: {item.externalAccountId}</small></td><td>{item.provider==="facebook"?"Ads read · Business read":"Đơn hàng · Sản phẩm · POS"}</td><td>{item.provider==="pancake"?`${item.metadata?.shops?.length??1} shop`:`${item.metadata?.businesses?.length??0} BM · ${item.metadata?.adAccounts?.length??0} tài khoản Ads`}</td><td>{new Date(item.updatedAt).toLocaleString("vi-VN")}</td><td><span className={`status ${item.status==="active"?"live":"die"}`}>● {item.status==="active"?"Đã xác minh":"Cần xác minh"}</span></td><td><button className="row-action" onClick={item.provider==="facebook"?syncFacebookAssets:loadConnections}>{item.provider==="facebook"?"Đồng bộ":"Kiểm tra"}</button></td></tr>)}
             {!connections.length&&<tr><td colSpan={7}><div className="empty-connections">Chưa có nguồn dữ liệu nào. Nhấn “Kết nối tài khoản” để bắt đầu.</div></td></tr>}
           </tbody></table></div>
         </section>
