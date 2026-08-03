@@ -1,4 +1,5 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
@@ -22,31 +23,48 @@ service cloud.firestore {
     }
 
     match /admins/{uid} {
-      allow read: if activeAdmin();
+      allow get: if signedIn() && uid == request.auth.uid;
+      allow list: if manager();
+
       allow create: if signedIn()
         && uid == request.auth.uid
+        && request.resource.data.uid == uid
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.active == true
+        && request.resource.data.keys().hasAll([
+          'uid', 'email', 'displayName', 'role', 'active', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'active', 'createdAt'
+        ])
         && exists(/databases/$(database)/documents/adminInvites/$(request.auth.token.email))
-        && request.resource.data.role == get(/databases/$(database)/documents/adminInvites/$(request.auth.token.email)).data.role;
+        && request.resource.data.role
+          == get(/databases/$(database)/documents/adminInvites/$(request.auth.token.email)).data.role;
+
       allow update: if owner()
         && resource.data.role != 'owner'
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.role == resource.data.role;
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active']);
+
       allow delete: if false;
     }
 
     match /adminInvites/{email} {
-      allow read: if manager() || (signedIn() && request.auth.token.email == email);
+      allow get: if manager()
+        || (signedIn() && request.auth.token.email == email);
+      allow list: if manager();
+
       allow create, update: if manager()
         && request.resource.data.email == email
-        && request.resource.data.role in ['admin', 'viewer'];
-      allow delete: if manager() || (signedIn() && request.auth.token.email == email);
+        && request.resource.data.role in ['admin', 'viewer']
+        && request.resource.data.keys().hasAll(['email', 'role', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['email', 'role', 'createdAt']);
+
+      allow delete: if manager()
+        || (signedIn() && request.auth.token.email == email);
     }
 
     match /{document=**} {
-      allow read, write: if activeAdmin();
+      allow read, write: if false;
     }
   }
 }

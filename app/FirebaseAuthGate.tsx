@@ -120,15 +120,23 @@ export function FirebaseAuthGate({ children }: { children: ReactNode }) {
                 snapshot = await getDoc(profileRef);
               }
             }
-            if (!snapshot.exists() || snapshot.data().active !== true) {
+            if (!snapshot.exists()) {
               await signOut(auth);
-              setError("Tài khoản chưa được cấp quyền quản trị.");
+              setError(`Không tìm thấy hồ sơ quản trị. UID đăng nhập: ${nextUser.uid}`);
+              return;
+            }
+            if (snapshot.data().active !== true) {
+              await signOut(auth);
+              setError(`Hồ sơ quản trị chưa hoạt động. UID: ${nextUser.uid}; active: ${String(snapshot.data().active)}`);
               return;
             }
             setProfile(snapshot.data() as AdminProfile);
-          } catch {
+          } catch (cause) {
             await signOut(auth);
-            setError("Tài khoản chưa được cấp quyền hoặc cấu hình Firestore chưa hoàn tất.");
+            const code = typeof cause === "object" && cause && "code" in cause
+              ? String((cause as { code?: unknown }).code)
+              : "unknown";
+            setError(`Không thể đọc hồ sơ Firestore. Mã lỗi: ${code}; UID: ${nextUser.uid}`);
           } finally {
             setLoading(false);
           }
