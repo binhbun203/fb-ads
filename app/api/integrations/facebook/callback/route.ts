@@ -1,4 +1,4 @@
-import { saveIntegration, verifyState } from "../../_shared";
+import { loadIntegrationToken, saveIntegration, verifyState } from "../../_shared";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -16,7 +16,8 @@ export async function GET(request: Request) {
     return Response.redirect(destination);
   }
   const appId = process.env.META_APP_ID;
-  const appSecret = process.env.META_APP_SECRET;
+  const appSecret = process.env.META_APP_SECRET
+    || await loadIntegrationToken(payload.uid, "facebook_config");
   if (!appId || !appSecret) {
     destination.searchParams.set("connection", "facebook-config");
     return Response.redirect(destination);

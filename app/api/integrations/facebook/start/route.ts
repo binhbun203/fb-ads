@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     redirect_uri: redirectUri,
     state,
     response_type: "code",
-    scope: "business_management,ads_read,read_insights",
+    scope: "business_management,ads_read",
   });
   return Response.json({ url: `https://www.facebook.com/${version}/dialog/oauth?${params}` });
 }

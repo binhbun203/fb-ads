@@ -65,7 +65,8 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [showConnect, setShowConnect] = useState(false);
-  const [connectMode, setConnectMode] = useState<"choose" | "pancake">("choose");
+  const [connectMode, setConnectMode] = useState<"choose" | "facebook" | "pancake">("choose");
+  const [metaAppSecret, setMetaAppSecret] = useState("");
   const [pancakeApiKey, setPancakeApiKey] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connections, setConnections] = useState<Array<{provider:string;accountName:string;externalAccountId:string;status:string;updatedAt:number;metadata?:{shops?:Array<{id:number;name:string;pageCount:number}>}}>>([]);
@@ -125,6 +126,24 @@ export default function Home() {
       window.location.assign(data.url);
     } catch {
       setNotice("Facebook chưa được cấu hình App ID hoặc bạn chưa đăng nhập quản trị.");
+      setConnecting(false);
+    }
+  };
+
+  const configureFacebook = async () => {
+    setConnecting(true);
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/facebook/configure", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ appSecret: metaAppSecret }),
+      });
+      if (!response.ok) throw new Error("invalid");
+      setMetaAppSecret("");
+      await connectFacebook();
+    } catch {
+      setNotice("Chỉ tài khoản Owner được lưu Meta App Secret. Hãy kiểm tra lại khóa và quyền quản trị.");
       setConnecting(false);
     }
   };
@@ -235,10 +254,10 @@ export default function Home() {
       </DetailPage>}
       <footer className="page-footer"><span>AdPilot Ops · Dữ liệu mẫu minh họa</span><span><i className="live-dot"/> Hệ thống hoạt động bình thường</span></footer>
     </section>
-    {showConnect && <div className="modal-backdrop" onMouseDown={()=>{setShowConnect(false);setConnectMode("choose")}}><section className="connect-modal" role="dialog" aria-modal="true" aria-label="Kết nối tài khoản" onMouseDown={e=>e.stopPropagation()}><button className="modal-close" aria-label="Đóng" onClick={()=>{setShowConnect(false);setConnectMode("choose")}}>×</button><h2>{connectMode==="choose"?"Kết nối nguồn dữ liệu":"Kết nối Pancake POS"}</h2><p>{connectMode==="choose"?"Chọn tài khoản bạn muốn đăng nhập và cấp quyền đọc báo cáo.":"Tạo API Key trong Pancake POS rồi dán vào bên dưới. Không nhập mật khẩu Pancake."}</p>{connectMode==="choose"?<div className="provider-list">
-      <button disabled={connecting} onClick={connectFacebook}><span className="account-icon large">f</span><span><b>Đăng nhập bằng Facebook</b><small>Kết nối Business Manager và tài khoản quảng cáo</small></span><em>→</em></button>
+    {showConnect && <div className="modal-backdrop" onMouseDown={()=>{setShowConnect(false);setConnectMode("choose")}}><section className="connect-modal" role="dialog" aria-modal="true" aria-label="Kết nối tài khoản" onMouseDown={e=>e.stopPropagation()}><button className="modal-close" aria-label="Đóng" onClick={()=>{setShowConnect(false);setConnectMode("choose")}}>×</button><h2>{connectMode==="choose"?"Kết nối nguồn dữ liệu":connectMode==="facebook"?"Kết nối Facebook Business":"Kết nối Pancake POS"}</h2><p>{connectMode==="choose"?"Chọn tài khoản bạn muốn đăng nhập và cấp quyền đọc báo cáo.":connectMode==="facebook"?"Owner nhập App Secret một lần để mã hóa trên máy chủ, sau đó tiếp tục đăng nhập Facebook.":"Tạo API Key trong Pancake POS rồi dán vào bên dưới. Không nhập mật khẩu Pancake."}</p>{connectMode==="choose"?<div className="provider-list">
+      <button disabled={connecting} onClick={()=>setConnectMode("facebook")}><span className="account-icon large">f</span><span><b>Đăng nhập bằng Facebook</b><small>Kết nối Business Manager và tài khoản quảng cáo</small></span><em>→</em></button>
       <button onClick={()=>setConnectMode("pancake")}><span className="pancake">P</span><span><b>Kết nối Pancake POS</b><small>Đồng bộ shop, pages, đơn hàng và sản phẩm</small></span><em>→</em></button>
-    </div>:<div className="pancake-key-form"><label>API Key Pancake<input type="password" autoComplete="off" value={pancakeApiKey} onChange={e=>setPancakeApiKey(e.target.value)} placeholder="Dán API Key tại đây"/></label><small>Pancake POS → Cài đặt → Kết nối bên thứ ba → Webhook/API → Tạo API Key.</small><div><button onClick={()=>setConnectMode("choose")}>Quay lại</button><button disabled={connecting||pancakeApiKey.length<12} onClick={connectPancake}>{connecting?"Đang xác minh…":"Kết nối & đồng bộ"}</button></div></div>}<div className="oauth-info">{connectMode==="choose"?"Facebook sẽ mở trang cấp quyền chính thức. AdPilot không nhìn thấy mật khẩu Facebook của bạn.":"API Key được mã hóa AES-GCM và chỉ lưu ở máy chủ."}</div></section></div>}
+    </div>:connectMode==="facebook"?<div className="pancake-key-form"><label>Meta App Secret<input type="password" autoComplete="off" value={metaAppSecret} onChange={e=>setMetaAppSecret(e.target.value)} placeholder="Dán App Secret tại đây"/></label><small>Chỉ tài khoản Owner được lưu khóa. Khóa được mã hóa trước khi ghi vào cơ sở dữ liệu và không xuất hiện trong bảng tài khoản.</small><div><button onClick={()=>setConnectMode("choose")}>Quay lại</button><button disabled={connecting||metaAppSecret.length<20} onClick={configureFacebook}>{connecting?"Đang bảo mật…":"Lưu & đăng nhập Facebook"}</button></div></div>:<div className="pancake-key-form"><label>API Key Pancake<input type="password" autoComplete="off" value={pancakeApiKey} onChange={e=>setPancakeApiKey(e.target.value)} placeholder="Dán API Key tại đây"/></label><small>Pancake POS → Cài đặt → Kết nối bên thứ ba → Webhook/API → Tạo API Key.</small><div><button onClick={()=>setConnectMode("choose")}>Quay lại</button><button disabled={connecting||pancakeApiKey.length<12} onClick={connectPancake}>{connecting?"Đang xác minh…":"Kết nối & đồng bộ"}</button></div></div>}<div className="oauth-info">{connectMode==="choose"?"Facebook sẽ mở trang cấp quyền chính thức. AdPilot không nhìn thấy mật khẩu Facebook của bạn.":"Khóa kết nối được mã hóa AES-GCM và chỉ lưu ở máy chủ."}</div></section></div>}
     {notice && <div className="toast">✓ {notice}</div>}
   </main>;
 }

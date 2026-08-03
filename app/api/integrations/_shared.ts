@@ -22,6 +22,30 @@ export async function requireFirebaseUser(request: Request) {
   return user?.localId ? { uid: user.localId, email: user.email ?? "" } : null;
 }
 
+export async function requireFirebaseOwner(request: Request) {
+  const user = await requireFirebaseUser(request);
+  const header = request.headers.get("authorization");
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!user || !token || !projectId) return null;
+
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/admins/${encodeURIComponent(user.uid)}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!response.ok) return null;
+  const profile = await response.json() as {
+    fields?: {
+      role?: { stringValue?: string };
+      active?: { booleanValue?: boolean };
+    };
+  };
+  return profile.fields?.role?.stringValue === "owner" &&
+    profile.fields?.active?.booleanValue === true
+    ? user
+    : null;
+}
+
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
@@ -157,4 +181,13 @@ export async function saveIntegration(input: {
       now,
       now,
     ).run();
+}
+
+export async function loadIntegrationToken(userId: string, provider: string) {
+  await ensureIntegrationTable();
+  const row = await env.DB.prepare(
+    "SELECT encrypted_token, token_iv FROM integrations WHERE user_id = ? AND provider = ? AND status = 'active'",
+  ).bind(userId, provider).first<{ encrypted_token: string; token_iv: string }>();
+  if (!row) return null;
+  return decryptToken(row.encrypted_token, row.token_iv);
 }
