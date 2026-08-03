@@ -52,6 +52,9 @@ type Connection = {
       dailySpend?: Array<{ date: string; spend: number; impressions: number; clicks: number }>;
     }>;
     reportRange?: { from: string; to: string };
+    summary?: { orderCount: number; revenue: number; cancelledCount: number };
+    daily?: Array<{ date: string; orders: number; revenue: number; cost: number; cancelled: number }>;
+    products?: Array<{ name: string; sku: string; orders: number; revenue: number; cost: number }>;
     lastSyncedAt?: number;
   };
 };
@@ -92,6 +95,7 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   const facebook = connections.find(item => item.provider === "facebook");
+  const pancake = connections.find(item => item.provider === "pancake");
   const accounts = useMemo<AccountRow[]>(() => (facebook?.metadata?.adAccounts ?? []).map(account => {
     const dailySpend = account.dailySpend ?? [];
     const previousDaySpend = dailySpend.length > 1 ? dailySpend[dailySpend.length - 2].spend : 0;
@@ -108,17 +112,29 @@ export default function Home() {
     };
   }), [facebook]);
   const daily = useMemo<DailyRow[]>(() => {
-    const totals = new Map<string, number>();
+    const totals = new Map<string, DailyRow>();
     for (const account of facebook?.metadata?.adAccounts ?? []) {
-      for (const row of account.dailySpend ?? []) totals.set(row.date, (totals.get(row.date) ?? 0) + row.spend);
+      for (const row of account.dailySpend ?? []) {
+        const value = totals.get(row.date) ?? { date: row.date, ads: 0, bills: 0, revenue: 0, cost: 0 };
+        value.ads += row.spend;
+        totals.set(row.date, value);
+      }
     }
-    return [...totals.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([date, ads]) => ({
-      date, ads, bills: 0, revenue: 0, cost: 0,
-    }));
-  }, [facebook]);
+    for (const row of pancake?.metadata?.daily ?? []) {
+      const value = totals.get(row.date) ?? { date: row.date, ads: 0, bills: 0, revenue: 0, cost: 0 };
+      value.revenue += Number(row.revenue ?? 0);
+      value.cost += Number(row.cost ?? 0);
+      totals.set(row.date, value);
+    }
+    return [...totals.values()].sort((a, b) => b.date.localeCompare(a.date));
+  }, [facebook, pancake]);
+  const products = pancake?.metadata?.products ?? [];
   const filtered = useMemo(() => accounts.filter(a => `${a.name} ${a.bm}`.toLowerCase().includes(query.toLowerCase())), [accounts, query]);
   const totalSpend = accounts.reduce((s, a) => s + a.spent, 0);
-  const totalRevenue = accounts.reduce((s, a) => s + a.revenue, 0);
+  const totalRevenue = Number(pancake?.metadata?.summary?.revenue ?? 0);
+  const totalOrders = Number(pancake?.metadata?.summary?.orderCount ?? 0);
+  const totalCancelled = Number(pancake?.metadata?.summary?.cancelledCount ?? 0);
+  const totalCost = products.reduce((sum, product) => sum + Number(product.cost ?? 0), 0);
   const totalThreshold = accounts.reduce((s, a) => s + a.threshold, 0);
   const liveCount = accounts.filter(a => a.status === "Live").length;
   const dieCount = accounts.length - liveCount;
@@ -181,11 +197,42 @@ export default function Home() {
   };
 
   const hasFacebookConnection = connections.some(item => item.provider === "facebook");
+  const hasPancakeConnection = connections.some(item => item.provider === "pancake");
+
+  const syncPancakeData = async (silent = false) => {
+    setSyncing(true);
+    try {
+      const token = await firebaseToken();
+      const response = await fetch("/api/integrations/pancake/sync", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: fromDate, to: toDate }),
+      });
+      const data = await response.json() as { orderCount?: number; revenue?: number; error?: string };
+      if (!response.ok) throw new Error(data.error);
+      await loadConnections();
+      if (!silent) setNotice(`Đã đồng bộ ${data.orderCount ?? 0} đơn Pancake, doanh thu ${money(data.revenue ?? 0)}.`);
+    } catch (cause) {
+      const code = cause instanceof Error ? cause.message : "unknown";
+      if (!silent) setNotice(`Không thể đồng bộ Pancake (${code}). Hãy kiểm tra lại API Key và quyền xem đơn hàng.`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const syncAll = async (silent = false) => {
+    const jobs: Promise<void>[] = [];
+    if (hasFacebookConnection) jobs.push(syncFacebookAssets(true));
+    if (hasPancakeConnection) jobs.push(syncPancakeData(true));
+    await Promise.all(jobs);
+    await loadConnections();
+    if (!silent) setNotice("Đã đồng bộ dữ liệu mới nhất từ Meta và Pancake.");
+  };
 
   useEffect(() => {
-    if (!hasFacebookConnection) return;
+    if (!hasFacebookConnection && !hasPancakeConnection) return;
     const syncWhenVisible = () => {
-      if (document.visibilityState === "visible") void syncFacebookAssets(true);
+      if (document.visibilityState === "visible") void syncAll(true);
     };
     syncWhenVisible();
     const timer = window.setInterval(syncWhenVisible, 60_000);
@@ -194,7 +241,7 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", syncWhenVisible);
     };
-  }, [hasFacebookConnection, fromDate, toDate]);
+  }, [hasFacebookConnection, hasPancakeConnection, fromDate, toDate]);
 
   useEffect(() => {
     void loadConnections();
@@ -267,12 +314,12 @@ export default function Home() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">A</div><div><b>AdPilot</b><small>Ops Console</small></div></div>
       <nav>{tabs.map(t => <button key={t.name} className={tab === t.name ? "active" : ""} onClick={() => setTab(t.name)}><span>{t.icon}</span>{t.name}</button>)}</nav>
-      <div className="sync-card"><div><span className="pulse" /><b>Đồng bộ gần thời gian thực</b></div><p>Facebook Ads · tự động mỗi 60 giây</p><small>{connections.find(item=>item.provider==="facebook")?.metadata?.lastSyncedAt ? `Meta: ${new Date(connections.find(item=>item.provider==="facebook")!.metadata!.lastSyncedAt!).toLocaleString("vi-VN")}` : "Chưa đồng bộ tài sản Meta"}</small><button disabled={syncing} onClick={()=>syncFacebookAssets(false)}>↻ {syncing ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button></div>
+      <div className="sync-card"><div><span className="pulse" /><b>Đồng bộ gần thời gian thực</b></div><p>Meta & Pancake · tự động mỗi 60 giây</p><small>{facebook?.metadata?.lastSyncedAt || pancake?.metadata?.lastSyncedAt ? `Mới nhất: ${new Date(Math.max(facebook?.metadata?.lastSyncedAt??0,pancake?.metadata?.lastSyncedAt??0)).toLocaleString("vi-VN")}` : "Chưa có lần đồng bộ dữ liệu"}</small><button disabled={syncing} onClick={()=>syncAll(false)}>↻ {syncing ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button></div>
       <div className="profile"><div className="avatar">QT</div><div><b>Quản trị viên</b><small>admin@adpilot.vn</small></div><span>•••</span></div>
     </aside>
 
     <section className="content">
-      <header><div><h1>{tab}</h1><p>Dữ liệu vận hành Ads & bán hàng · {fromDate.split("-").reverse().join("/")} — {toDate.split("-").reverse().join("/")}</p></div><div className="actions"><div className="date-range"><span>◷</span><label>Từ ngày<input aria-label="Từ ngày" type="date" value={fromDate} max={toDate} onChange={e => setFromDate(e.target.value)} /></label><i>→</i><label>Đến ngày<input aria-label="Đến ngày" type="date" value={toDate} min={fromDate} onChange={e => setToDate(e.target.value)} /></label><button disabled={syncing} onClick={()=>syncFacebookAssets(false)}>{syncing ? "Đang tải…" : "Áp dụng"}</button></div><button className="export" onClick={exportReport}>⇩ Xuất báo cáo</button></div></header>
+      <header><div><h1>{tab}</h1><p>Dữ liệu vận hành Ads & bán hàng · {fromDate.split("-").reverse().join("/")} — {toDate.split("-").reverse().join("/")}</p></div><div className="actions"><div className="date-range"><span>◷</span><label>Từ ngày<input aria-label="Từ ngày" type="date" value={fromDate} max={toDate} onChange={e => setFromDate(e.target.value)} /></label><i>→</i><label>Đến ngày<input aria-label="Đến ngày" type="date" value={toDate} min={fromDate} onChange={e => setToDate(e.target.value)} /></label><button disabled={syncing} onClick={()=>syncAll(false)}>{syncing ? "Đang tải…" : "Áp dụng"}</button></div><button className="export" onClick={exportReport}>⇩ Xuất báo cáo</button></div></header>
 
       {tab === "Tổng quan" && <>
         <div className="stats">
@@ -317,18 +364,18 @@ export default function Home() {
       </DetailPage>}
 
       {tab === "Doanh số & ROAS" && <DetailPage title="Doanh số & ROAS" subtitle="Dữ liệu chốt đơn từ POS Pancake theo tài khoản và sản phẩm">
-        <div className="mini-stats"><Mini label="Doanh thu trong kỳ" value={money(totalRevenue)}/><Mini label="Đơn đã chốt" value="0" accent/><Mini label="ROAS tổng" value={totalSpend ? (totalRevenue/totalSpend).toFixed(2) : "0.00"}/><Mini label="Trạng thái" value="Chưa đồng bộ đơn"/></div>
-        <div className="split-tables"><ProductTable/><AccountTable rows={accounts} mode="roas"/></div>
+        <div className="mini-stats"><Mini label="Doanh thu trong kỳ" value={money(totalRevenue)}/><Mini label="Đơn trong kỳ" value={String(totalOrders)} accent/><Mini label="ROAS tổng" value={totalSpend ? (totalRevenue/totalSpend).toFixed(2) : "0.00"}/><Mini label="Hoàn / hủy" value={String(totalCancelled)}/></div>
+        <div className="split-tables"><ProductTable rows={products}/><EmptyData message="ROAS theo từng tài khoản cần dữ liệu gắn nguồn quảng cáo từ đơn Pancake. ROAS tổng và theo sản phẩm hiện dùng tổng chi tiêu Meta trong kỳ."/></div>
       </DetailPage>}
 
       {tab === "Cost sản phẩm" && <DetailPage title="Cost sản phẩm đã gửi" subtitle="Theo dõi giá vốn của các đơn đã gửi theo ngày">
-        <div className="mini-stats"><Mini label="Tổng cost trong kỳ" value={money(0)}/><Mini label="Sản phẩm đã gửi" value="0"/><Mini label="Cost / đơn TB" value={money(0)} accent/><Mini label="Trạng thái" value="Chưa đồng bộ đơn"/></div>
-        <EmptyData message="Chưa có dữ liệu giá vốn sản phẩm thật từ Pancake POS." />
+        <div className="mini-stats"><Mini label="Tổng cost trong kỳ" value={money(totalCost)}/><Mini label="Sản phẩm trong đơn" value={String(products.reduce((sum,p)=>sum+p.orders,0))}/><Mini label="Cost / đơn TB" value={money(totalOrders ? totalCost/totalOrders : 0)} accent/><Mini label="Hoàn / hủy" value={String(totalCancelled)}/></div>
+        <ProductCostTable rows={products} />
       </DetailPage>}
 
       {tab === "Dữ liệu Pancake" && <DetailPage title="Dữ liệu Pancake POS" subtitle="Tổng hợp tình trạng đơn hàng, doanh thu và vận chuyển">
-        <div className="sync-banner"><span className="pancake">P</span><div><b>Pancake POS {connections.some(item=>item.provider==="pancake") ? "đã kết nối" : "chưa kết nối"}</b><p>{connections.find(item=>item.provider==="pancake") ? `Xác minh: ${new Date(connections.find(item=>item.provider==="pancake")!.updatedAt).toLocaleString("vi-VN")}` : "Hãy kết nối tài khoản Pancake"}</p></div><span className={`status ${connections.some(item=>item.provider==="pancake")?"live":"die"}`}>● {connections.some(item=>item.provider==="pancake")?"Hoạt động":"Chưa kết nối"}</span><button onClick={loadConnections}>↻ Kiểm tra kết nối</button></div>
-        <div className="mini-stats"><Mini label="Đơn mới" value="0"/><Mini label="Đã xác nhận" value="0" accent/><Mini label="Đang giao" value="0"/><Mini label="Hoàn / hủy" value="0"/></div>
+        <div className="sync-banner"><span className="pancake">P</span><div><b>Pancake POS {hasPancakeConnection ? "đã kết nối" : "chưa kết nối"}</b><p>{pancake?.metadata?.lastSyncedAt ? `Đồng bộ: ${new Date(pancake.metadata.lastSyncedAt).toLocaleString("vi-VN")}` : "Chưa đồng bộ đơn hàng"}</p></div><span className={`status ${hasPancakeConnection?"live":"die"}`}>● {hasPancakeConnection?"Hoạt động":"Chưa kết nối"}</span><button disabled={syncing} onClick={()=>syncPancakeData(false)}>↻ Đồng bộ đơn hàng</button></div>
+        <div className="mini-stats"><Mini label="Đơn trong kỳ" value={String(totalOrders)}/><Mini label="Doanh thu" value={money(totalRevenue)} accent/><Mini label="Giá vốn" value={money(totalCost)}/><Mini label="Hoàn / hủy" value={String(totalCancelled)}/></div>
         <DailyTable rows={daily} />
       </DetailPage>}
       {tab === "Tài khoản kết nối" && <DetailPage title="Tài khoản kết nối" subtitle="Đăng nhập, xác minh và quản lý các nguồn dữ liệu đang đồng bộ">
@@ -340,7 +387,7 @@ export default function Home() {
         <section className="panel connected-table">
           <div className="panel-head"><div><h2>Bảng tài khoản đã đăng nhập</h2><p>Danh tính, quyền truy cập và lần xác minh gần nhất</p></div><button className="verify-all" onClick={loadConnections}>↻ Làm mới</button></div>
           <div className="table-wrap"><table><thead><tr><th>NỀN TẢNG</th><th>TÀI KHOẢN ĐĂNG NHẬP</th><th>QUYỀN TRUY CẬP</th><th>TÀI SẢN</th><th>XÁC MINH GẦN NHẤT</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>
-            {connections.map(item=><tr key={item.provider}><td><div className="platform"><span className={item.provider==="facebook"?"account-icon":"pancake small"}>{item.provider==="facebook"?"f":"P"}</span><b>{item.provider==="facebook"?"Meta Business":"Pancake POS"}</b></div></td><td><b>{item.accountName}</b><small className="sku">ID: {item.externalAccountId}</small></td><td>{item.provider==="facebook"?"Ads read · Business read":"Đơn hàng · Sản phẩm · POS"}</td><td>{item.provider==="pancake"?`${item.metadata?.shops?.length??1} shop`:`${item.metadata?.businesses?.length??0} BM · ${item.metadata?.adAccounts?.length??0} tài khoản Ads`}</td><td>{new Date(item.updatedAt).toLocaleString("vi-VN")}</td><td><span className={`status ${item.status==="active"?"live":"die"}`}>● {item.status==="active"?"Đã xác minh":"Cần xác minh"}</span></td><td><button className="row-action" onClick={item.provider==="facebook"?()=>syncFacebookAssets(false):loadConnections}>{item.provider==="facebook"?"Đồng bộ":"Kiểm tra"}</button></td></tr>)}
+            {connections.map(item=><tr key={item.provider}><td><div className="platform"><span className={item.provider==="facebook"?"account-icon":"pancake small"}>{item.provider==="facebook"?"f":"P"}</span><b>{item.provider==="facebook"?"Meta Business":"Pancake POS"}</b></div></td><td><b>{item.accountName}</b><small className="sku">ID: {item.externalAccountId}</small></td><td>{item.provider==="facebook"?"Ads read · Business read":"Đơn hàng · Sản phẩm · POS"}</td><td>{item.provider==="pancake"?`${item.metadata?.shops?.length??1} shop · ${item.metadata?.summary?.orderCount??0} đơn`:`${item.metadata?.businesses?.length??0} BM · ${item.metadata?.adAccounts?.length??0} tài khoản Ads`}</td><td>{new Date(item.metadata?.lastSyncedAt??item.updatedAt).toLocaleString("vi-VN")}</td><td><span className={`status ${item.status==="active"?"live":"die"}`}>● {item.status==="active"?"Đã xác minh":"Cần xác minh"}</span></td><td><button className="row-action" onClick={item.provider==="facebook"?()=>syncFacebookAssets(false):()=>syncPancakeData(false)}>Đồng bộ</button></td></tr>)}
             {!connections.length&&<tr><td colSpan={7}><div className="empty-connections">Chưa có nguồn dữ liệu nào. Nhấn “Kết nối tài khoản” để bắt đầu.</div></td></tr>}
           </tbody></table></div>
         </section>
@@ -362,5 +409,7 @@ function DetailPage({title,subtitle,children}:{title:string;subtitle:string;chil
 function Mini({label,value,accent=false}:{label:string;value:string;accent?:boolean}) { return <article className={`mini ${accent?"accent":""}`}><p>{label}</p><b>{value}</b></article> }
 function AccountTable({rows,mode}:{rows:AccountRow[];mode:string}) { return <div className="table-wrap"><table><thead><tr><th>TÀI KHOẢN</th><th>BUSINESS MANAGER</th><th>{mode==="status"?"TRẠNG THÁI":"CHI TIÊU TRONG KỲ"}</th><th>{mode==="spend"?"NGÀY TRƯỚC":"DOANH THU"}</th><th>{mode==="status"?"PHÂN PHỐI":"ROAS"}</th><th>TRẠNG THÁI</th></tr></thead><tbody>{rows.map(a=><tr key={a.id}><td><div className="account"><span className="account-icon">f</span><b>{a.name}</b></div></td><td>{a.bm}</td><td>{mode==="status"?<span className={`status ${a.status==="Live"?"live":"die"}`}>● {a.status}</span>:<b>{money(a.spent)}</b>}</td><td>{mode==="spend"?money(a.yesterday):money(a.revenue)}</td><td>{mode==="status"?(a.status==="Live"?"Bình thường":"Đã dừng"):<span className="roas">{a.spent ? (a.revenue/a.spent).toFixed(2) : "0.00"}</span>}</td><td><span className={`status ${a.status==="Live"?"live":"die"}`}>● {a.status}</span></td></tr>)}{!rows.length&&<tr><td colSpan={6}><div className="empty-connections">Chưa có dữ liệu tài khoản cho khoảng ngày này.</div></td></tr>}</tbody></table></div> }
 function DailyTable({rows}:{rows:DailyRow[]}){return <section className="panel daily"><div className="panel-head"><div><h2>Tổng hợp theo ngày</h2><p>Dữ liệu trong khoảng đã chọn</p></div></div><div className="table-wrap"><table><thead><tr><th>NGÀY</th><th>CHI TIÊU ADS</th><th>BILL ĐÃ TRẢ</th><th>DOANH THU POS</th><th>COST ĐÃ GỬI</th><th>ROAS</th></tr></thead><tbody>{rows.map(d=><tr key={d.date}><td><b>{d.date.split("-").reverse().join("/")}</b></td><td>{money(d.ads)}</td><td>{money(d.bills)}</td><td><b>{money(d.revenue)}</b></td><td>{money(d.cost)}</td><td><span className="roas">{d.ads ? (d.revenue/d.ads).toFixed(2) : "0.00"}</span></td></tr>)}{!rows.length&&<tr><td colSpan={6}><div className="empty-connections">Chưa có dữ liệu theo ngày. Nhấn “Áp dụng” để đồng bộ Meta.</div></td></tr>}</tbody></table></div></section>}
-function ProductTable(){return <section className="panel product-table"><div className="panel-head"><div><h2>Theo sản phẩm</h2><p>Dữ liệu thật từ Pancake</p></div></div><EmptyData message="Chưa có dữ liệu đơn hàng theo sản phẩm." /></section>}
+type ProductRow = { name: string; sku: string; orders: number; revenue: number; cost: number };
+function ProductTable({rows}:{rows:ProductRow[]}){return <section className="panel product-table"><div className="panel-head"><div><h2>Theo sản phẩm</h2><p>Dữ liệu thật từ Pancake</p></div></div><div className="table-wrap"><table><thead><tr><th>SẢN PHẨM</th><th>SỐ LƯỢNG</th><th>DOANH THU</th><th>GIÁ VỐN</th></tr></thead><tbody>{rows.map(p=><tr key={p.sku}><td><b>{p.name}</b><small className="sku">{p.sku}</small></td><td>{p.orders}</td><td>{money(p.revenue)}</td><td>{money(p.cost)}</td></tr>)}{!rows.length&&<tr><td colSpan={4}><div className="empty-connections">Chưa có dữ liệu đơn hàng theo sản phẩm.</div></td></tr>}</tbody></table></div></section>}
+function ProductCostTable({rows}:{rows:ProductRow[]}){return <div className="table-wrap"><table><thead><tr><th>SẢN PHẨM</th><th>SKU</th><th>SỐ LƯỢNG</th><th>GIÁ VỐN / SP</th><th>TỔNG COST</th></tr></thead><tbody>{rows.map(p=><tr key={p.sku}><td><b>{p.name}</b></td><td>{p.sku}</td><td>{p.orders}</td><td>{money(p.orders ? p.cost/p.orders : 0)}</td><td><b>{money(p.cost)}</b></td></tr>)}{!rows.length&&<tr><td colSpan={5}><div className="empty-connections">Pancake chưa trả về giá vốn sản phẩm trong khoảng ngày này.</div></td></tr>}</tbody></table></div>}
 function EmptyData({message}:{message:string}) { return <div className="empty-connections">{message}</div> }

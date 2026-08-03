@@ -192,6 +192,22 @@ export async function loadIntegrationToken(userId: string, provider: string) {
   return decryptToken(row.encrypted_token, row.token_iv);
 }
 
+export async function loadIntegrationMetadata<T = Record<string, unknown>>(
+  userId: string,
+  provider: string,
+) {
+  await ensureIntegrationTable();
+  const row = await env.DB.prepare(
+    "SELECT metadata FROM integrations WHERE user_id = ? AND provider = ? AND status = 'active'",
+  ).bind(userId, provider).first<{ metadata: string | null }>();
+  if (!row?.metadata) return null;
+  try {
+    return JSON.parse(row.metadata) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateIntegrationMetadata(
   userId: string,
   provider: string,
