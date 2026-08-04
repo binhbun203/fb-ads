@@ -27,8 +27,24 @@ const textValue = (...values: unknown[]) => {
 const dayOf = (order: PancakeOrder) =>
   textValue(order.inserted_at, order.created_at, order.creation_time, order.updated_at).slice(0, 10);
 
-const orderTotal = (order: PancakeOrder) =>
-  numberValue(order.total_price, order.total, order.order_value, order.cod, order.total_amount);
+const confirmedNetRevenue = (order: PancakeOrder) => {
+  // Pancake total_price/cod includes the amount collected from the customer.
+  // Net product revenue excludes shipping; discounts are already reflected in
+  // total_price, so subtracting total_discount again would double-count them.
+  const collected = numberValue(
+    order.total_price,
+    order.total,
+    order.order_value,
+    order.cod,
+    order.money_to_collect,
+    order.total_amount,
+  );
+  const shippingFee = Math.max(
+    0,
+    numberValue(order.shipping_fee, order.customer_pay_fee),
+  );
+  return Math.max(0, collected - shippingFee);
+};
 
 const orderItems = (order: PancakeOrder) => {
   const rows = order.items ?? order.order_items ?? order.products;
@@ -36,7 +52,9 @@ const orderItems = (order: PancakeOrder) => {
 };
 
 const returnedStatuses = new Set([-1, 4, 5, 15]);
-const confirmedStatuses = new Set([1, 2, 3, 8, 9, 12, 13, 16, 20]);
+// "Doanh số thuần" is the value of orders whose current Pancake status is
+// exactly "Đã xác nhận" (status 1), per the business definition.
+const confirmedStatuses = new Set([1]);
 const shippedStatuses = new Set([2, 3, 4, 5, 15, 16]);
 const cancelled = (order: PancakeOrder) => {
   const statusCode = numberValue(order.status);
@@ -115,7 +133,7 @@ export async function POST(request: Request) {
         const isCancelled = cancelled(order);
         const isConfirmed = confirmedStatuses.has(statusCode) && !isCancelled;
         const isShipped = shippedStatuses.has(statusCode);
-        const total = isConfirmed ? orderTotal(order) : 0;
+        const total = isConfirmed ? confirmedNetRevenue(order) : 0;
         orderCount += 1;
         revenue += total;
         if (isCancelled) cancelledCount += 1;
@@ -177,6 +195,7 @@ export async function POST(request: Request) {
         shopCount: shops.length,
         source: "inserted_at",
         timezone: "Asia/Ho_Chi_Minh",
+        revenueDefinition: "confirmed_status_1_excluding_shipping",
       },
       daily: [...dailyMap.entries()].map(([date, values]) => ({ date, ...values })),
       products: [...productMap.values()].sort((a, b) => b.revenue - a.revenue),
